@@ -1,1 +1,985 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>별의 일주운동 시뮬레이터</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+    canvas { display: block; }
 
+    #modeToggle, #latSlider, #lonSlider, #latValue, #lonValue, #horizonSlider, #horizonValue, #hint, #lonFixedNote {
+      position: absolute;
+      left: 20px;
+      z-index: 2;
+      background: rgba(255,255,255,0.92);
+      border: none;
+      border-radius: 6px;
+      font-weight: 700;
+      padding: 6px 10px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      user-select: none;
+      box-sizing: border-box;
+      color: #111;
+      width: 220px;
+    }
+
+    #modeToggle { top: 20px; cursor: pointer; background:#fff; }
+
+    /* 위도 */
+    #latValue { top: 60px; }
+    #latSlider { top: 82px; padding: 0; height: 18px; }
+
+    /* 경도 */
+    #lonValue { top: 114px; }
+    #lonSlider { top: 136px; padding: 0; height: 18px; }
+
+    /* 지평선 */
+    #horizonValue { top: 168px; }
+    #horizonSlider { top: 190px; padding: 0; height: 18px; }
+
+    /* 관측자 모드용: 경도 고정 안내 */
+    #lonFixedNote {
+      top: 222px;
+      font-size: 12px;
+      display: none;
+    }
+
+    /* 관측자 모드용: 안내문 */
+    #hint {
+      top: 252px;
+      width: 280px;
+      font-size: 12px;
+      font-weight: 650;
+      opacity: 0.95;
+      display: none;
+      pointer-events: none;
+      line-height: 1.25;
+    }
+
+    /* 관측자 모드용: 컨트롤 박스 */
+    #observerExtras {
+      position: absolute;
+      left: 20px;
+      top: 306px;
+      z-index: 2;
+      width: 280px;
+      background: rgba(255,255,255,0.92);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      display: none;
+      box-sizing: border-box;
+      color: #111;
+    }
+    #observerExtras .row { display:flex; align-items:center; gap:8px; }
+    #observerExtras label { cursor:pointer; display:flex; align-items:center; gap:6px; font-size: 12px; font-weight: 800; }
+    #monthSelect {
+      flex: 1;
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #bbb;
+      font-weight: 800;
+      background: #fff;
+    }
+    #observerExtras .sub {
+      margin-top: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #222;
+      opacity: 0.9;
+    }
+
+    /* 테스트 로그 (기본: 숨김, ?debug=1) */
+    #testLog {
+      position: absolute;
+      left: 20px;
+      top: 410px;
+      z-index: 2;
+      width: 280px;
+      max-height: 42vh;
+      overflow: auto;
+      background: rgba(255,255,255,0.92);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      white-space: pre-wrap;
+      display: none;
+      box-sizing: border-box;
+      color: #111;
+    }
+
+    @media (max-width: 520px) {
+      #modeToggle, #latValue, #latSlider, #lonValue, #lonSlider, #horizonValue, #horizonSlider, #lonFixedNote {
+        width: 200px;
+        left: 12px;
+      }
+      #hint, #observerExtras, #testLog { left: 12px; width: 260px; }
+      #observerExtras { top: 308px; }
+      #testLog { top: 398px; }
+    }
+  </style>
+</head>
+<body>
+  <button id="modeToggle">모드: 지구 자전</button>
+
+  <div id="latValue">위도: 북위 30°</div>
+  <input type="range" id="latSlider" min="-90" max="90" value="30"/>
+
+  <div id="lonValue">경도: 동경 0°</div>
+  <input type="range" id="lonSlider" min="-180" max="180" value="0"/>
+
+  <div id="horizonValue">지평선 반지름: 3</div>
+  <input type="range" id="horizonSlider" min="1" max="10" step="0.1" value="3"/>
+
+  <div id="lonFixedNote">경도 고정됨: 관측자 기준</div>
+  <div id="hint">관측자 시점: 화면을 <b>드래그</b>해서 고개를 돌릴 수 있어요.<br/>(샌드박스 환경: 포인터락 미사용)</div>
+
+  <div id="observerExtras">
+    <div class="row" style="margin-bottom:6px;">
+      <button id="captureBtn" style="flex:1; font-weight:800;">📸 화면 캡처</button>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <span style="min-width:60px; font-size:12px; font-weight:800;">확대/축소</span>
+      <input type="range" id="observerZoom" min="25" max="80" value="60" style="flex:1;"/>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <button id="observerRunBtn" style="flex:1; font-weight:800;">실행</button>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <label><input type="checkbox" id="toggleEcliptic"/>황도선 표시</label>
+    </div>
+    <div class="row">
+      <span style="min-width:34px; font-size:12px; font-weight:800;">월</span>
+      <select id="monthSelect">
+        <option value="0">1월</option><option value="1">2월</option><option value="2">3월</option><option value="3">4월</option>
+        <option value="4">5월</option><option value="5">6월</option><option value="6">7월</option><option value="7">8월</option>
+        <option value="8">9월</option><option value="9">10월</option><option value="10">11월</option><option value="11">12월</option>
+      </select>
+    </div>
+    <div class="sub">(관측자 모드 전용 · 황도선+12궁+태양 함께 표시)</div>
+  </div>
+
+  <div id="testLog"></div>
+
+  <script src="https://unpkg.com/three@0.124.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.124.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    // =============================
+    // Debug / Test Harness
+    // =============================
+    var DEBUG = (new URLSearchParams(location.search)).get('debug') === '1';
+    var testLogEl = document.getElementById('testLog');
+    if (DEBUG && testLogEl) testLogEl.style.display = 'block';
+
+    var testLines = [];
+    function logLine(s) {
+      if (DEBUG && testLogEl) {
+        testLines.push(String(s));
+        testLogEl.textContent = testLines.join('\n');
+      }
+      console.log(s);
+    }
+    function assert(name, cond) {
+      logLine((cond ? 'OK  ' : 'FAIL') + ' ' + name);
+      return !!cond;
+    }
+    window.addEventListener('error', function (e) {
+      logLine('Runtime error: ' + (e && e.message ? e.message : 'unknown'));
+    });
+    assert('스크립트 파싱 완료', true);
+
+    // =============================
+    // Scene / Camera / Renderer
+    // =============================
+    var earth, celestialSphere;
+    var rotationMode = 'earth'; // 'earth' | 'celestial'
+
+    var latitude = 30;
+    var longitude = 0;
+
+    var horizonRadius = 3;
+    var prevHorizonRadius = horizonRadius;
+
+    var scene = new THREE.Scene();
+
+    var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 0, 50);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    document.body.appendChild(renderer.domElement);
+
+    assert('THREE 존재', typeof THREE !== 'undefined');
+    assert('OrbitControls 존재', typeof THREE.OrbitControls === 'function');
+
+    var controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.enableZoom = true;
+    controls.enablePan = false;
+
+    // =============================
+    // 1인칭(관측자 시점) 드래그 룩
+    // =============================
+    var firstPerson = false;
+    var observerRunning = false; // 관측자 시점 실행/정지
+    var observerFov = 60; // 관측자 시점 FOV
+    var yaw = 0;
+    var pitch = 0;
+
+    var fpDragging = false;
+    var fpLastX = 0;
+    var fpLastY = 0;
+
+    function applyFirstPersonLook() {
+      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    }
+
+    renderer.domElement.addEventListener('pointerdown', function (e) {
+      if (!firstPerson) return;
+      fpDragging = true;
+      fpLastX = e.clientX;
+      fpLastY = e.clientY;
+      if (renderer.domElement.setPointerCapture) renderer.domElement.setPointerCapture(e.pointerId);
+    }, { passive: true });
+
+    renderer.domElement.addEventListener('pointermove', function (e) {
+      if (!firstPerson || !fpDragging) return;
+      var sensitivity = 0.002;
+      var dx = e.clientX - fpLastX;
+      fpLastX = e.clientX;
+
+      // 관측자 시점: 상하(pitch) 완전 고정, 좌우(yaw)만 회전
+      yaw -= dx * sensitivity;
+      pitch = 0;
+      applyFirstPersonLook();
+    }, { passive: true });
+
+    function endDrag(e) {
+      fpDragging = false;
+      if (renderer.domElement.releasePointerCapture && e && e.pointerId != null) {
+        try { renderer.domElement.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+    }
+    renderer.domElement.addEventListener('pointerup', endDrag, { passive: true });
+    renderer.domElement.addEventListener('pointercancel', endDrag, { passive: true });
+    renderer.domElement.addEventListener('pointerleave', endDrag, { passive: true });
+
+    // =============================
+    // Observer-only sky overlay (관측자 전용, 다른 모드와 완전 분리)
+    // =============================
+    var observerSkyOverlay = new THREE.Group();
+    observerSkyOverlay.visible = false;
+    scene.add(observerSkyOverlay);
+
+    // --- 황도선/태양 (관측자 전용) ---
+    var ECLIPTIC_RADIUS = 80;
+    var OBLIQUITY = THREE.MathUtils.degToRad(23.44);
+
+    function eclipticPoint(lambdaRad) {
+      var p = new THREE.Vector3(
+        ECLIPTIC_RADIUS * Math.cos(lambdaRad),
+        0,
+        ECLIPTIC_RADIUS * Math.sin(lambdaRad)
+      );
+      p.applyAxisAngle(new THREE.Vector3(1, 0, 0), OBLIQUITY);
+      return p;
+    }
+
+    // 방법 B(투명도 페이드): 황도선을 작은 세그먼트(Line)로 쪼개서 opacity 업데이트
+    var eclipticSegGroup = new THREE.Group();
+    eclipticSegGroup.visible = false;
+    observerSkyOverlay.add(eclipticSegGroup);
+
+    var ECLIPTIC_SEGMENTS = 256;
+    var eclipticSegs = []; // {line, a0, a1}
+
+    function buildEclipticSegments(color) {
+      for (var i = eclipticSegGroup.children.length - 1; i >= 0; i--) {
+        var ch = eclipticSegGroup.children[i];
+        if (ch.geometry) ch.geometry.dispose();
+        if (ch.material) ch.material.dispose();
+        eclipticSegGroup.remove(ch);
+      }
+      eclipticSegs.length = 0;
+
+      for (var s = 0; s < ECLIPTIC_SEGMENTS; s++) {
+        var a0 = (s / ECLIPTIC_SEGMENTS) * Math.PI * 2;
+        var a1 = ((s + 1) / ECLIPTIC_SEGMENTS) * Math.PI * 2;
+        var p0 = eclipticPoint(a0);
+        var p1 = eclipticPoint(a1);
+        var g = new THREE.BufferGeometry().setFromPoints([p0, p1]);
+        var m = new THREE.LineBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: 1,
+          depthTest: false
+        });
+        var ln = new THREE.Line(g, m);
+        ln.renderOrder = 999;
+        eclipticSegGroup.add(ln);
+        eclipticSegs.push({ line: ln, a0: a0, a1: a1 });
+      }
+    }
+
+    buildEclipticSegments(0xffaa33);
+
+    var sunGeom = new THREE.SphereGeometry(1.2, 16, 16);
+    var sunMat = new THREE.MeshBasicMaterial({ color: 0xffcc33, depthTest: false, transparent: true, opacity: 1.0 });
+    var sunMesh = new THREE.Mesh(sunGeom, sunMat);
+    sunMesh.visible = false;
+    sunMesh.renderOrder = 1000;
+    observerSkyOverlay.add(sunMesh);
+
+    // =============================
+    // 황도 12궁 이름 (관측자 전용)
+    // =============================
+    var ZODIAC_DATA = [
+      { name: '양자리',     lambdaDeg: 15  },
+      { name: '황소자리',   lambdaDeg: 45  },
+      { name: '쌍둥이자리', lambdaDeg: 75  },
+      { name: '게자리',     lambdaDeg: 105 },
+      { name: '사자자리',   lambdaDeg: 135 },
+      { name: '처녀자리',   lambdaDeg: 165 },
+      { name: '천칭자리',   lambdaDeg: 195 },
+      { name: '전갈자리',   lambdaDeg: 225 },
+      { name: '궁수자리',   lambdaDeg: 255 },
+      { name: '염소자리',   lambdaDeg: 285 },
+      { name: '물병자리',   lambdaDeg: 315 },
+      { name: '물고기자리', lambdaDeg: 345 }
+    ];
+
+    function makeZodiacLabel(text) {
+      var c = document.createElement('canvas');
+      c.width = 256;
+      c.height = 128;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.fillStyle = '#eaeaea';
+      ctx.font = '48px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 128, 64);
+
+      var tex = new THREE.CanvasTexture(c);
+      var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      var spr = new THREE.Sprite(mat);
+      spr.scale.set(6, 3, 1);
+      spr.renderOrder = 1001;
+      return spr;
+    }
+
+    var zodiacGroup = new THREE.Group();
+    zodiacGroup.visible = false;
+    observerSkyOverlay.add(zodiacGroup);
+
+    for (var zi = 0; zi < ZODIAC_DATA.length; zi++) {
+      var z = ZODIAC_DATA[zi];
+      var lambda = THREE.MathUtils.degToRad(z.lambdaDeg);
+      var base = eclipticPoint(lambda);
+      var normal = base.clone().normalize();
+      var pos = base.clone().add(normal.multiplyScalar(2));
+      var label = makeZodiacLabel(z.name);
+      label.position.copy(pos);
+      zodiacGroup.add(label);
+    }
+
+    // 1월=0°, 2월=30° ... 12월=330° (교육용 1차)
+    function setSunByMonthIndex(mIdx) {
+      var lambda2 = (mIdx % 12) * (Math.PI * 2 / 12);
+      sunMesh.position.copy(eclipticPoint(lambda2));
+    }
+    setSunByMonthIndex(0);
+
+    // =============================
+    // Sky sphere + stars
+    // =============================
+    var sphereGeometry = new THREE.SphereGeometry(40, 64, 64);
+    var sphereMaterial = new THREE.MeshBasicMaterial({ color: 0x222288, wireframe: true, transparent: true, opacity: 0.2 });
+    celestialSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    scene.add(celestialSphere);
+
+    var starsGeometry = new THREE.BufferGeometry();
+    var starCount = 1000;
+    var starPositions = new Float32Array(starCount * 3);
+    for (var i2 = 0; i2 < starCount; i2++) {
+      var theta = Math.random() * 2 * Math.PI;
+      var phi = Math.acos(2 * Math.random() - 1);
+      var radius = 39.5;
+      var x = radius * Math.sin(phi) * Math.cos(theta);
+      var y = radius * Math.sin(phi) * Math.sin(theta);
+      var z2 = radius * Math.cos(phi);
+      starPositions.set([x, y, z2], i2 * 3);
+    }
+    starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    var starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3 });
+    var stars = new THREE.Points(starsGeometry, starsMaterial);
+    celestialSphere.add(stars);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    var directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(10, 10, 10);
+    scene.add(directionalLight);
+
+    // =============================
+    // Observer model
+    // =============================
+    var observer = new THREE.Group();
+
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), new THREE.MeshStandardMaterial({ color: 0xffccaa }));
+    head.position.y = 1.75;
+    observer.add(head);
+
+    var body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.5, 16), new THREE.MeshStandardMaterial({ color: 0x3399ff }));
+    body.position.y = 0.75;
+    observer.add(body);
+
+    var leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1, 8), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+    leftLeg.position.set(-0.2, -0.5, 0);
+    observer.add(leftLeg);
+
+    var rightLeg = leftLeg.clone();
+    rightLeg.position.x = 0.2;
+    observer.add(rightLeg);
+
+    // =============================
+    // Earth
+    // =============================
+    var textureLoader = new THREE.TextureLoader();
+    textureLoader.setCrossOrigin('anonymous');
+    function createEarth(mat) {
+      earth = new THREE.Mesh(new THREE.SphereGeometry(5, 64, 64), mat);
+      scene.add(earth);
+      earth.add(observer);
+      updateObserverPosition();
+      assert('지구 Mesh 생성', earth instanceof THREE.Mesh);
+    }
+
+    textureLoader.load(
+      'https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg',
+      function (texture) { createEarth(new THREE.MeshPhongMaterial({ map: texture })); },
+      undefined,
+      function () { createEarth(new THREE.MeshPhongMaterial({ color: 0x224466 })); }
+    );
+
+    // =============================
+    // Earth rotation axis visualization
+    // =============================
+    var axisGroup = new THREE.Group();
+    scene.add(axisGroup);
+
+    var axisMat = new THREE.LineBasicMaterial({ color: 0xff4444 });
+    var AXIS_LEN = 40;
+    var axisGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -AXIS_LEN, 0),
+      new THREE.Vector3(0,  AXIS_LEN, 0)
+    ]);
+    var earthAxisLine = new THREE.Line(axisGeom, axisMat);
+    axisGroup.add(earthAxisLine);
+
+    // =============================
+    // Horizon plane + directions
+    // =============================
+    var horizonGroup = new THREE.Group();
+    observer.add(horizonGroup);
+
+    var directionGroup = new THREE.Group();
+    horizonGroup.add(directionGroup);
+
+    var FOOT_OFFSET = -0.9;
+
+    var horizonMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00ff00,
+      opacity: 0.3,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+
+    var horizonCircle = new THREE.Mesh(new THREE.CircleGeometry(horizonRadius, 64), horizonMaterial);
+    horizonGroup.add(horizonCircle);
+
+    horizonCircle.rotation.x = -Math.PI / 2;
+    horizonCircle.position.y = 0.001;
+
+    function makeArrowXZ(dirXZ, color) {
+      var d = dirXZ.clone().normalize();
+      var arrow = new THREE.ArrowHelper(d, new THREE.Vector3(0, 0, 0), horizonRadius * 0.9, color, 0.3, 0.2);
+      directionGroup.add(arrow);
+      return arrow;
+    }
+
+    function makeLabel(text, dirXZ) {
+      var c2 = document.createElement('canvas');
+      c2.width = 256;
+      c2.height = 128;
+      var ctx2 = c2.getContext('2d');
+      ctx2.clearRect(0, 0, c2.width, c2.height);
+      ctx2.fillStyle = 'white';
+      ctx2.font = '64px sans-serif';
+      ctx2.textAlign = 'center';
+      ctx2.textBaseline = 'middle';
+      ctx2.fillText(text, 128, 64);
+
+      var texture2 = new THREE.CanvasTexture(c2);
+      var material2 = new THREE.SpriteMaterial({ map: texture2, transparent: true, depthTest: false });
+      var sprite = new THREE.Sprite(material2);
+      sprite.scale.set(2.4, 1.2, 1);
+      sprite.position.copy(dirXZ.clone().normalize().multiplyScalar(horizonRadius));
+      directionGroup.add(sprite);
+      return sprite;
+    }
+
+    // 기준(XZ): +Z=북, -Z=남, +X=동, -X=서
+    var V_N = new THREE.Vector3(0, 0, -1);
+    var V_S = new THREE.Vector3(0, 0,  1);
+    var V_E = new THREE.Vector3( 1, 0, 0);
+    var V_W = new THREE.Vector3(-1, 0, 0);
+
+    var arrowN = makeArrowXZ(V_N, 0xff3333);
+    var arrowS = makeArrowXZ(V_S, 0x3333ff);
+    var arrowE = makeArrowXZ(V_E, 0x33ff33);
+    var arrowW = makeArrowXZ(V_W, 0xffff33);
+
+    var labelN = makeLabel('북', V_N);
+    var labelS = makeLabel('남', V_S);
+    var labelE = makeLabel('동', V_E);
+    var labelW = makeLabel('서', V_W);
+
+    function syncHorizonRadius() {
+      horizonCircle.geometry.dispose();
+      horizonCircle.geometry = new THREE.CircleGeometry(horizonRadius, 64);
+
+      arrowN.setLength(horizonRadius * 0.9, 0.3, 0.2);
+      arrowS.setLength(horizonRadius * 0.9, 0.3, 0.2);
+      arrowE.setLength(horizonRadius * 0.9, 0.3, 0.2);
+      arrowW.setLength(horizonRadius * 0.9, 0.3, 0.2);
+
+      labelN.position.copy(V_N.clone().normalize().multiplyScalar(horizonRadius));
+      labelS.position.copy(V_S.clone().normalize().multiplyScalar(horizonRadius));
+      labelE.position.copy(V_E.clone().normalize().multiplyScalar(horizonRadius));
+      labelW.position.copy(V_W.clone().normalize().multiplyScalar(horizonRadius));
+
+      assert('syncHorizonRadius 실행 OK', true);
+    }
+
+    // =============================
+    // Observer placement & orientation
+    // =============================
+    function updateObserverPosition() {
+      var r = 5.5;
+      var lat = THREE.MathUtils.degToRad(latitude);
+      var lon = THREE.MathUtils.degToRad(longitude);
+
+      var x3 = r * Math.cos(lat) * Math.sin(lon);
+      var y3 = r * Math.sin(lat);
+      var z3 = r * Math.cos(lat) * Math.cos(lon);
+
+      observer.position.set(x3, y3, z3);
+
+      var up = new THREE.Vector3(x3, y3, z3).normalize();
+      observer.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+
+      horizonGroup.position.set(0, FOOT_OFFSET, 0);
+      horizonGroup.quaternion.identity();
+
+      assert('관측자 반지름 OK', Math.abs(observer.position.length() - r) < 0.02);
+
+      var qWorld = new THREE.Quaternion();
+      horizonCircle.getWorldQuaternion(qWorld);
+      var planeNormalWorld = new THREE.Vector3(0, 0, 1).applyQuaternion(qWorld).normalize();
+      assert('녹색 평면 노멀=관측자 Up', planeNormalWorld.dot(up) > 0.995);
+    }
+
+    // =============================
+    // 방위(북쪽) 정렬
+    // =============================
+    var _tmpV3a = new THREE.Vector3();
+    var _tmpV3b = new THREE.Vector3();
+    var _tmpQ1 = new THREE.Quaternion();
+
+    function updateDirectionAlignment() {
+      var obsWorldPos = observer.getWorldPosition(_tmpV3a);
+      var upWorld = obsWorldPos.clone().normalize();
+
+      var axisWorld = _tmpV3b.set(0, 1, 0);
+
+      var northWorld = axisWorld.clone().sub(upWorld.clone().multiplyScalar(axisWorld.dot(upWorld)));
+      if (northWorld.lengthSq() < 1e-10) return;
+      northWorld.normalize();
+
+      var hgWorldQ = horizonGroup.getWorldQuaternion(_tmpQ1);
+      var invHgWorldQ = hgWorldQ.clone().invert();
+      var northLocal = northWorld.clone().applyQuaternion(invHgWorldQ).normalize();
+
+      var baseNorthLocal = new THREE.Vector3(0, 0, -1);
+      var qAlign = new THREE.Quaternion().setFromUnitVectors(baseNorthLocal, northLocal);
+      directionGroup.quaternion.copy(qAlign);
+    }
+
+    // =============================
+    // UI
+    // =============================
+    var hintEl = document.getElementById('hint');
+    var lonSliderEl = document.getElementById('lonSlider');
+    var lonValueEl = document.getElementById('lonValue');
+    var lonFixedNoteEl = document.getElementById('lonFixedNote');
+    var modeBtn = document.getElementById('modeToggle');
+    var horizonSlider = document.getElementById('horizonSlider');
+    var observerExtrasEl = document.getElementById('observerExtras');
+
+    function setLongitudeUIVisible(visible) {
+      lonSliderEl.style.display = visible ? '' : 'none';
+      lonValueEl.style.display  = visible ? '' : 'none';
+    }
+
+    function setModeLabel() {
+      observerSkyOverlay.visible = (firstPerson === true);
+
+      if (firstPerson) {
+        modeBtn.textContent = '모드: 관측자 시점';
+        if (lonFixedNoteEl) lonFixedNoteEl.style.display = 'block';
+        if (hintEl) hintEl.style.display = 'block';
+        if (observerExtrasEl) observerExtrasEl.style.display = 'block';
+
+        // 관측자 시점: 경도 0° 고정 (UI는 보이되 비활성화)
+        longitude = 0;
+        lonSliderEl.value = 0;
+        lonSliderEl.disabled = true;
+        lonValueEl.textContent = '경도: 동경 0°';
+      } else {
+        if (lonFixedNoteEl) lonFixedNoteEl.style.display = 'none';
+        if (hintEl) hintEl.style.display = 'none';
+        if (observerExtrasEl) observerExtrasEl.style.display = 'none';
+
+        // 다른 모드: 경도 슬라이더 활성화
+        lonSliderEl.disabled = false;
+
+        modeBtn.textContent = (rotationMode === 'earth') ? '모드: 지구 자전' : '모드: 천구 회전';
+      }
+    }
+
+    document.getElementById('latSlider').addEventListener('input', function (e) {
+      latitude = parseFloat(e.target.value);
+      var label = latitude >= 0 ? ('북위 ' + latitude + '°') : ('남위 ' + Math.abs(latitude) + '°');
+      document.getElementById('latValue').textContent = '위도: ' + label;
+      updateObserverPosition();
+      updateDirectionAlignment();
+    });
+
+    document.getElementById('lonSlider').addEventListener('input', function (e) {
+      // 관측자 시점에서는 슬라이더 자체가 disabled라 이벤트가 거의 안 들어오지만,
+      // 혹시 강제로 바뀌는 경우에도 0°로 유지
+      if (firstPerson) {
+        longitude = 0;
+        lonSliderEl.value = 0;
+        lonValueEl.textContent = '경도: 동경 0°';
+      } else {
+        longitude = parseFloat(e.target.value);
+        var label = longitude >= 0 ? ('동경 ' + longitude + '°') : ('서경 ' + Math.abs(longitude) + '°');
+        document.getElementById('lonValue').textContent = '경도: ' + label;
+      }
+      updateObserverPosition();
+      updateDirectionAlignment();
+    });
+
+    horizonSlider.addEventListener('input', function (e) {
+      if (firstPerson) return;
+      horizonRadius = parseFloat(e.target.value);
+      document.getElementById('horizonValue').textContent = '지평선 반지름: ' + horizonRadius;
+      syncHorizonRadius();
+    });
+
+    // =============================
+    // Ecliptic UI binding (관측자 모드 전용)
+    // =============================
+    var toggleEcliptic = document.getElementById('toggleEcliptic');
+    var monthSelect = document.getElementById('monthSelect');
+
+    function applyEclipticVisibility() {
+      var on = !!(firstPerson && toggleEcliptic && toggleEcliptic.checked);
+      eclipticSegGroup.visible = on;
+      sunMesh.visible = on;
+      zodiacGroup.visible = on;
+      if (on) {
+        var mIdx = monthSelect ? parseInt(monthSelect.value, 10) : 0;
+        if (!isFinite(mIdx)) mIdx = 0;
+        setSunByMonthIndex(mIdx);
+      }
+    }
+
+    if (toggleEcliptic) {
+      toggleEcliptic.addEventListener('change', function () {
+        applyEclipticVisibility();
+      });
+    }
+    if (monthSelect) {
+      monthSelect.addEventListener('change', function () {
+        if (!firstPerson) return;
+        if (!toggleEcliptic || !toggleEcliptic.checked) return;
+        var mIdx = parseInt(monthSelect.value, 10);
+        if (!isFinite(mIdx)) mIdx = 0;
+        setSunByMonthIndex(mIdx);
+      });
+    }
+
+    // =============================
+    // Mode switching
+    // =============================
+    modeBtn.addEventListener('click', function () {
+      // earth → celestial → firstPerson → earth
+      if (!firstPerson && rotationMode === 'earth') {
+        rotationMode = 'celestial';
+        setModeLabel();
+        return;
+      }
+
+      if (!firstPerson && rotationMode === 'celestial') {
+        firstPerson = true;
+        controls.enabled = false;
+
+        // 관측자 시점에서도 경도 UI는 보임(단, 고정)
+        setLongitudeUIVisible(true);
+
+        // 지평선 반지름 10 고정
+        prevHorizonRadius = horizonRadius;
+        horizonRadius = 10;
+        horizonSlider.disabled = true;
+        horizonSlider.value = 10;
+        document.getElementById('horizonValue').textContent = '지평선 반지름: 10 (고정)';
+        syncHorizonRadius();
+
+        observer.add(camera);
+        camera.position.set(0, 1.6, 0);
+        yaw = 0;
+        pitch = 0;
+        camera.rotation.set(0, 0, 0);
+
+        // 관측자 시점: 기본은 정지
+        observerRunning = false;
+        var observerRunBtn = document.getElementById('observerRunBtn');
+        if (observerRunBtn) observerRunBtn.textContent = '실행';
+
+        setModeLabel();
+        applyEclipticVisibility();
+        return;
+      }
+
+      // firstPerson → earth
+      firstPerson = false;
+      rotationMode = 'earth';
+      controls.enabled = true;
+
+      // 경도 UI 복구
+      setLongitudeUIVisible(true);
+
+      // 지평선 반지름 복원
+      horizonRadius = prevHorizonRadius;
+      horizonSlider.disabled = false;
+      horizonSlider.value = horizonRadius;
+      document.getElementById('horizonValue').textContent = '지평선 반지름: ' + horizonRadius;
+      syncHorizonRadius();
+
+      scene.add(camera);
+      camera.position.set(0, 0, 50);
+      camera.lookAt(0, 0, 0);
+      controls.update();
+
+      setModeLabel();
+      applyEclipticVisibility();
+    });
+
+    // =============================
+    // Observer Run + Zoom
+    // =============================
+    var observerRunBtn2 = document.getElementById('observerRunBtn');
+    var observerZoom = document.getElementById('observerZoom');
+
+    if (observerZoom) {
+      observerZoom.addEventListener('input', function (e) {
+        if (!firstPerson) return;
+        observerFov = parseFloat(e.target.value);
+        if (!isFinite(observerFov)) observerFov = 60;
+      });
+    }
+
+    if (observerRunBtn2) {
+      observerRunBtn2.addEventListener('click', function () {
+        if (!firstPerson) return;
+        observerRunning = !observerRunning;
+        observerRunBtn2.textContent = observerRunning ? '정지' : '실행';
+      });
+    }
+
+    // =============================
+    // Horizon fade (관측자 시점 전용)
+    // =============================
+    var _tmpV3c = new THREE.Vector3();
+    var _tmpV3d = new THREE.Vector3();
+    var FADE_WIDTH = 2.0;
+
+    function segOpacityFromDot(d) {
+      if (d <= 0) return 0;
+      var t = d / FADE_WIDTH;
+      if (t >= 1) return 1;
+      return t * t * (3 - 2 * t); // smoothstep
+    }
+
+    function applyHorizonFade() {
+      if (!firstPerson) return;
+
+      // 관측자 기준 up 벡터(월드)
+      var camPos = camera.getWorldPosition(_tmpV3c);
+      var upWorld = camPos.clone().normalize();
+
+      // 황도선(세그먼트) 페이드
+      if (eclipticSegGroup.visible) {
+        for (var i = 0; i < eclipticSegs.length; i++) {
+          var seg = eclipticSegs[i];
+          var midAngle = (seg.a0 + seg.a1) * 0.5;
+          var midLocal = eclipticPoint(midAngle);
+          var midWorld = midLocal.applyMatrix4(eclipticSegGroup.matrixWorld);
+          var d = midWorld.dot(upWorld);
+          seg.line.material.opacity = segOpacityFromDot(d);
+        }
+      }
+
+      // 태양 페이드
+      if (sunMesh.visible) {
+        var sunWorld = sunMesh.getWorldPosition(_tmpV3d);
+        var d2 = sunWorld.dot(upWorld);
+        sunMesh.material.opacity = segOpacityFromDot(d2);
+      }
+
+      // 12궁 라벨: 가독성 위해 지평선 아래면 즉시 숨김
+      if (zodiacGroup.visible) {
+        for (var j = 0; j < zodiacGroup.children.length; j++) {
+          var sp = zodiacGroup.children[j];
+          var w = sp.getWorldPosition(_tmpV3d);
+          var dj = w.dot(upWorld);
+          sp.visible = (dj > 0);
+        }
+      }
+    }
+
+    // =============================
+    // Capture (관측자 시점 전용)
+    // =============================
+    var captureBtn = document.getElementById('captureBtn');
+    if (captureBtn) {
+      captureBtn.addEventListener('click', function () {
+        if (!firstPerson) return;
+        try {
+          var canvas = renderer.domElement;
+          var dataURL = canvas.toDataURL('image/png');
+
+          // 파일명 생성
+          var now = new Date();
+          var pad = function(n){return String(n).padStart(2,'0')};
+          var yyyy = now.getFullYear();
+          var mm = pad(now.getMonth()+1);
+          var dd = pad(now.getDate());
+          var hh = pad(now.getHours());
+          var mi = pad(now.getMinutes());
+
+          var mIdx = monthSelect ? parseInt(monthSelect.value,10) : 0;
+          if (!isFinite(mIdx)) mIdx = 0;
+          var monthLabel = (mIdx+1) + '월';
+
+          var latLabel = latitude >= 0 ? ('북위' + Math.round(latitude)) : ('남위' + Math.round(Math.abs(latitude)));
+
+          // yaw 기반 방향
+          var yawDeg = THREE.MathUtils.radToDeg(yaw);
+          yawDeg = ((yawDeg % 360) + 360) % 360;
+          var dirLabel = '북쪽';
+          if (yawDeg >= 45 && yawDeg < 135) dirLabel = '동쪽';
+          else if (yawDeg >= 135 && yawDeg < 225) dirLabel = '남쪽';
+          else if (yawDeg >= 225 && yawDeg < 315) dirLabel = '서쪽';
+
+          var filename = 'observer_' + yyyy + mm + dd + '_' + hh + mi + '_' + monthLabel + '_' + latLabel + '_' + dirLabel + '.png';
+
+          var a = document.createElement('a');
+          a.href = dataURL;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } catch (err) {
+          console.error('캡처 실패', err);
+        }
+      });
+    }
+
+    // =============================
+    // Render loop
+    // =============================
+    var _tmpCamPos = new THREE.Vector3();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (earth) {
+        axisGroup.position.copy(earth.position);
+        axisGroup.rotation.copy(earth.rotation);
+      }
+
+      // 기존 모드 회전 (관측자 시점 제외)
+      if (!firstPerson) {
+        if (rotationMode === 'earth' && earth) {
+          earth.rotation.y += 0.002;
+        } else if (rotationMode === 'celestial' && celestialSphere) {
+          celestialSphere.rotation.y -= 0.002;
+        }
+      }
+
+      // 관측자 시점 전용: 실행 버튼 ON일 때만 천체 회전
+      if (firstPerson && observerRunning && celestialSphere) {
+        celestialSphere.rotation.y -= 0.002;
+      }
+
+      applyHorizonFade();
+      updateDirectionAlignment();
+
+      // 관측자 전용 overlay는 관측자 모드에서만 카메라 주변으로
+      if (firstPerson) {
+        camera.fov = observerFov;
+        camera.updateProjectionMatrix();
+        camera.getWorldPosition(_tmpCamPos);
+        observerSkyOverlay.position.copy(_tmpCamPos);
+        if (celestialSphere) observerSkyOverlay.rotation.y = celestialSphere.rotation.y;
+      }
+
+      if (!firstPerson) controls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // init
+    scene.add(observer);
+    updateObserverPosition();
+    updateDirectionAlignment();
+    syncHorizonRadius();
+    setModeLabel();
+    applyEclipticVisibility();
+    animate();
+
+    // Tests (기본)
+    assert('천구 Mesh 생성', celestialSphere instanceof THREE.Mesh);
+    assert('별 Points 생성', stars instanceof THREE.Points);
+    assert('관측자 Group 생성', observer instanceof THREE.Group);
+    assert('지평선 Mesh 생성', horizonCircle instanceof THREE.Mesh);
+    assert('applyEclipticVisibility 함수 존재', typeof applyEclipticVisibility === 'function');
+    assert('초기 overlay hidden', observerSkyOverlay.visible === false);
+    assert('황도 세그먼트 개수 OK', eclipticSegs.length === ECLIPTIC_SEGMENTS);
+    assert('태양 Mesh OK', sunMesh instanceof THREE.Mesh);
+  </script>
+</body>
+</html>
